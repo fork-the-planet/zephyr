@@ -19,6 +19,7 @@ if(NOT DEFINED ZEPHYR_BINARY_DIR)
 cmake was invoked with '${CMAKE_CURRENT_LIST_DIR}' specified as the source directory,
 but it must be invoked with an application source directory,
 such as '${CMAKE_CURRENT_LIST_DIR}/samples/hello_world'.
+Use 'cmake -S samples/hello_world -B build -Wno-dev' to specify the application source directory.
 Debug variables:
 CMAKE_CACHEFILE_DIR: ${CMAKE_CACHEFILE_DIR}
 ")
@@ -156,7 +157,7 @@ zephyr_compile_options($<$<COMPILE_LANGUAGE:CXX>:$<TARGET_PROPERTY:compiler-cpp,
 # Extra warnings options for twister run
 if (CONFIG_COMPILER_WARNINGS_AS_ERRORS)
   zephyr_compile_options($<$<COMPILE_LANGUAGE:C>:$<TARGET_PROPERTY:compiler,warnings_as_errors>>)
-  zephyr_compile_options($<$<COMPILE_LANGUAGE:CXX>:$<TARGET_PROPERTY:compiler,warnings_as_errors>>)
+  zephyr_compile_options($<$<COMPILE_LANGUAGE:CXX>:$<TARGET_PROPERTY:compiler-cpp,warnings_as_errors>>)
   zephyr_compile_options($<$<COMPILE_LANGUAGE:ASM>:$<TARGET_PROPERTY:asm,warnings_as_errors>>)
   zephyr_link_libraries($<TARGET_PROPERTY:linker,warnings_as_errors>)
 endif()
@@ -1559,7 +1560,7 @@ endif()
 
 configure_linker_script(
   ${ZEPHYR_CURRENT_LINKER_CMD}
-  "${LINKER_PASS_${ZEPHYR_CURRENT_LINKER_PASS}_DEFINE}"
+  "LINKER_ZEPHYR_FINAL"
   ${APP_SMEM_ALIGNED_DEP}
   ${KOBJECT_LINKER_DEP}
   ${CODE_RELOCATION_DEP}
@@ -1567,13 +1568,12 @@ configure_linker_script(
   )
 
 add_custom_target(
-  linker_zephyr_prebuilt_script_target
+  linker_zephyr_final_script_target
   DEPENDS
   ${ZEPHYR_CURRENT_LINKER_CMD}
   )
-
 set_property(TARGET
-  linker_zephyr_prebuilt_script_target
+  linker_zephyr_final_script_target
   PROPERTY INCLUDE_DIRECTORIES
   ${ZEPHYR_INCLUDE_DIRS}
   )
@@ -1584,73 +1584,20 @@ get_property(GKOF GLOBAL PROPERTY GENERATED_KERNEL_OBJECT_FILES)
 get_property(GKSF GLOBAL PROPERTY GENERATED_KERNEL_SOURCE_FILES)
 
 # FIXME: Is there any way to get rid of empty_file.c?
-add_executable(       ${ZEPHYR_LINK_STAGE_EXECUTABLE} misc/empty_file.c ${GASF})
+add_executable(       ${ZEPHYR_FINAL_EXECUTABLE} misc/empty_file.c ${GASF} ${GKSF})
 toolchain_ld_link_elf(
-  TARGET_ELF            ${ZEPHYR_LINK_STAGE_EXECUTABLE}
-  OUTPUT_MAP            ${PROJECT_BINARY_DIR}/${ZEPHYR_LINK_STAGE_EXECUTABLE}.map
-  LIBRARIES_PRE_SCRIPT  ""
-  LINKER_SCRIPT         ${PROJECT_BINARY_DIR}/${ZEPHYR_CURRENT_LINKER_CMD}
+  TARGET_ELF            ${ZEPHYR_FINAL_EXECUTABLE}
+  OUTPUT_MAP            ${PROJECT_BINARY_DIR}/${ZEPHYR_FINAL_EXECUTABLE}.map
+  LIBRARIES_PRE_SCRIPT  ${GKOF}
+  LINKER_SCRIPT         ${PROJECT_BINARY_DIR}/linker.cmd
+  LIBRARIES_POST_SCRIPT ""
   DEPENDENCIES          ${CODE_RELOCATION_DEP}
 )
-target_link_libraries_ifdef(CONFIG_NATIVE_LIBRARY ${ZEPHYR_LINK_STAGE_EXECUTABLE}
-                            $<TARGET_PROPERTY:linker,partial_linking>)
-target_byproducts(TARGET ${ZEPHYR_LINK_STAGE_EXECUTABLE}
-                  BYPRODUCTS ${PROJECT_BINARY_DIR}/${ZEPHYR_LINK_STAGE_EXECUTABLE}.map
-)
-set(BYPRODUCT_KERNEL_ELF_NAME "${PROJECT_BINARY_DIR}/${KERNEL_ELF_NAME}" CACHE FILEPATH "Kernel elf file" FORCE)
-set_property(TARGET
-  ${ZEPHYR_LINK_STAGE_EXECUTABLE}
-  PROPERTY LINK_DEPENDS ${PROJECT_BINARY_DIR}/${ZEPHYR_CURRENT_LINKER_CMD}
-  )
-add_dependencies(
-  ${ZEPHYR_LINK_STAGE_EXECUTABLE}
-  linker_zephyr_prebuilt_script_target
-  ${OFFSETS_LIB}
-  )
+set_property(TARGET   ${ZEPHYR_FINAL_EXECUTABLE} PROPERTY LINK_DEPENDS ${PROJECT_BINARY_DIR}/linker.cmd)
+add_dependencies(     ${ZEPHYR_FINAL_EXECUTABLE} linker_zephyr_final_script_target)
 
-set(generated_kernel_files ${GKSF} ${GKOF})
-if(NOT generated_kernel_files)
-  # Use the prebuilt elf as the final elf since we don't have a
-  # generation stage.
-  set(logical_target_for_zephyr_elf ${ZEPHYR_LINK_STAGE_EXECUTABLE})
-else()
-  # The final linker pass uses the same source linker script of the
-  # previous passes, but this time with a different output
-  # file and preprocessed with the define LINKER_ZEPHYR_FINAL.
-  configure_linker_script(
-    linker.cmd
-    "LINKER_ZEPHYR_FINAL"
-    ${CODE_RELOCATION_DEP}
-    ${ZEPHYR_LINK_STAGE_EXECUTABLE}
-    zephyr_generated_headers
-    )
-
-  add_custom_target(
-    linker_zephyr_final_script_target
-    DEPENDS
-    linker.cmd
-    )
-  set_property(TARGET
-    linker_zephyr_final_script_target
-    PROPERTY INCLUDE_DIRECTORIES
-    ${ZEPHYR_INCLUDE_DIRS}
-  )
-
-  add_executable(       ${ZEPHYR_FINAL_EXECUTABLE} misc/empty_file.c ${GASF} ${GKSF})
-  toolchain_ld_link_elf(
-    TARGET_ELF            ${ZEPHYR_FINAL_EXECUTABLE}
-    OUTPUT_MAP            ${PROJECT_BINARY_DIR}/${ZEPHYR_FINAL_EXECUTABLE}.map
-    LIBRARIES_PRE_SCRIPT  ${GKOF}
-    LINKER_SCRIPT         ${PROJECT_BINARY_DIR}/linker.cmd
-    LIBRARIES_POST_SCRIPT ""
-    DEPENDENCIES          ${CODE_RELOCATION_DEP}
-  )
-  set_property(TARGET   ${ZEPHYR_FINAL_EXECUTABLE} PROPERTY LINK_DEPENDS ${PROJECT_BINARY_DIR}/linker.cmd)
-  add_dependencies(     ${ZEPHYR_FINAL_EXECUTABLE} linker_zephyr_final_script_target)
-
-  # Use the pass2 elf as the final elf
-  set(logical_target_for_zephyr_elf ${ZEPHYR_FINAL_EXECUTABLE})
-endif()
+# Use the pass2 elf as the final elf
+set(logical_target_for_zephyr_elf ${ZEPHYR_FINAL_EXECUTABLE})
 
 # Export the variable to the application's scope to allow the
 # application to know what the name of the final elf target is.
@@ -2209,7 +2156,7 @@ endif()
 # two in case the user is not aware of this.
 set(build_types None Debug Release RelWithDebInfo MinSizeRel)
 
-if((CMAKE_BUILD_TYPE IN_LIST build_types) AND (NOT NO_BUILD_TYPE_WARNING))
+if((CMAKE_BUILD_TYPE IN LIST build_types) AND (NOT NO_BUILD_TYPE_WARNING))
   string(TOUPPER ${CMAKE_BUILD_TYPE} CMAKE_BUILD_TYPE_uppercase)
   # The CMAKE_C_FLAGS_<build_type> is a string, so we do a regex to see if the
   # optimization flag is present in that string.

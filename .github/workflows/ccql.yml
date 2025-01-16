@@ -36,16 +36,12 @@ jobs:
       with:
         languages: ${{ matrix.language }}
 
-    # Autobuild attempts to build any compiled languages (C/C++, C#, or Java).
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v2
+    - name: Custom Build
+      run: |
+        cmake -S samples/hello_world -B build -Wno-dev
+        cmake --build build
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2
       with:
         category: "/language:${{ matrix.language }}"
-
-    - name: Custom Build
-      run: |
-        cmake -S samples/hello_world -B build -Wno-dev
-        cmake --build build
